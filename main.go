@@ -96,7 +96,7 @@ func (url *Url) getUrlList(path string) {
 
 // 正则匹配url
 func (url *Url) regexpUrl(data *[]byte) {
-	re, err := regexp.Compile("(http[s]?://pan.baidu.com/s/[\\d a-z A-Z -]+)")
+	re, err := regexp.Compile("(http[s]?://pan.baidu.com/s/[\\d a-z A-Z _ -]+)")
 	if err != nil {
 		fmt.Println(err)
 	}
