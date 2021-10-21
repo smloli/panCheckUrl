@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"os"
-	"bufio"
 	"path/filepath"
 	"regexp"
 )
@@ -77,34 +76,40 @@ func (url *Url) checkUrl(flag bool, path string) {
 
 // 读取url.txt文件里的链接
 func (url *Url) getUrlList(path string) {
-	f, err := os.Open(path + "url.txt")
+    txtPath := path + "url.txt"
+	f, err := os.Open(txtPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	// 按行读取链接
-	buf := bufio.NewReader(f)
-	for {
-		line, _, err := buf.ReadLine()
-		if err != nil {
-			break
-		}
-		if url.urlList[0] == "" {
-			url.urlList[0] = regexpUrl(string(line))
-			continue
-		}
-		url.urlList = append(url.urlList, []string{regexpUrl(string(line))}...)
-	}
-	f.Close()
+    fileinfo, err := os.Stat(txtPath)
+    if err != nil {
+        log.Fatal("软件运行目录里未找到文件url.txt")
+    }
+    data := make([]byte, fileinfo.Size())
+    _, err = f.Read(data)
+    if err != nil {
+        log.Fatal(err)
+    }
+    url.regexpUrl(&data)
+    f.Close()
 }
 
 // 正则匹配url
-func regexpUrl(str string) string {
-	re, err := regexp.Compile("(http[s]?://pan.baidu.com/s/[\\w -]+)")
+func (url *Url) regexpUrl(data *[]byte) {
+	re, err := regexp.Compile("(http[s]?://pan.baidu.com/s/[\\d a-z A-Z -]+)")
 	if err != nil {
 		fmt.Println(err)
 	}
-	res := re.FindStringSubmatch(str)
-	return strings.TrimSpace(res[1])
+	res := re.FindAllSubmatch(*data, -1)
+    // 将匹配到的url写入到url.urlList
+    for _, v := range res {
+		_url := strings.TrimSpace(string(v[1]))
+        if url.urlList[0] == "" {
+			url.urlList[0] = _url
+			continue
+		}
+		url.urlList = append(url.urlList, []string{_url}...)
+	}
 }
 
 func main() {
@@ -114,7 +119,8 @@ func main() {
 	var tmp string
 	var flag bool  // 批量检测自动将有效链接写入文件
 	url.urlList = make([]string, 1)
-	urlPath := filepath.Dir(os.Args[0]) + "\\"
+	// 自动匹配当前系统的路径分隔符
+	urlPath := filepath.Dir(os.Args[0]) + filepath.FromSlash("/")
 	fmt.Println("-------------百度网盘链接有效性检测-------------")
 	fmt.Println()
 	fmt.Println("-----------------支持的链接格式-----------------")
@@ -123,7 +129,7 @@ func main() {
 	fmt.Println("链接: http://pan.baidu.com/s/1c0Er78G 密码: 2cci")
 	fmt.Println("链接: https://pan.baidu.com/s/1YZnL2-TC3Wy5bshU7fntxg 提取码: qku6 复制这段内容后打开百度网盘手机App，操作更方便哦")
 	fmt.Println("------------------------------------------------")
-	fmt.Print("0.单个检测\n1.批量检测（分行读取程序运行目录里url.txt的链接，自动将有效链接写入到loli.txt）\n")
+	fmt.Print("0.单个检测\n1.批量检测（读取软件运行目录url.txt文件里的每一行链接，检测完自动将有效链接写入到loli.txt）\n")
 	fmt.Println("------------------------------------------------")
 	fmt.Print("num:")
 	fmt.Scanln(&num)
@@ -138,7 +144,8 @@ func main() {
 				}
 				loli += tmp + " "
 			}
-			url.urlList[0] = regexpUrl(loli)
+            urlData := []byte(loli)
+            url.regexpUrl(&urlData)
 		case "1":
 			flag = true
 			url.getUrlList(urlPath)
