@@ -1,4 +1,4 @@
 # panCheckUrl
-百度网盘资源链接有效性检测
+百度、阿里云盘链接有效性检测
 
-![](https://dd-static.jd.com/ddimg/jfs/t1/209962/36/6193/53801/6170d4a2Eeaf0ffa3/98af4f1dfaa29b56.png)
+![](https://dd-static.jd.com/ddimg/jfs/t1/155689/21/21570/83351/61711717Ebca44c3b/0061de5d62268b31.png)
