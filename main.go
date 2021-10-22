@@ -25,9 +25,10 @@ var client = &http.Client{
 
 type RespCode struct{
     Code string
+	Share_name string
 }
 
-func aliYunCheck(_url string) (start string) {
+func aliYunCheck(_url string) (start string, shareName string) {
     client := &http.Client{}
     share_id := _url[30:]
     var respcode RespCode
@@ -49,6 +50,7 @@ func aliYunCheck(_url string) (start string) {
     switch respcode.Code {
         case "" :
             start = "✔️"
+            shareName = respcode.Share_name
         case "ShareLink.Cancelled":
             start = "❌"
         case "ShareLink.Forbidden":
@@ -90,6 +92,7 @@ func (url *Url) checkUrl(flag bool, path string) {
 	// 有效列表
 	oklist := make([]string, 1)
 	var start string
+	var shareName string
 	// 为了获取重定向的location，要重新实现一个http.Client
 	
 	for _, _url := range (*url).urlList {
@@ -101,7 +104,11 @@ func (url *Url) checkUrl(flag bool, path string) {
 			}
 			log.Printf("%s  %s\n", _url, start)
 		} else {
-			start = aliYunCheck(_url)
+			start, shareName = aliYunCheck(_url)
+			// 输出阿里云盘分享链接的文件名
+			if start == "✔️" {
+				_url = shareName + " " + _url
+			}
 			if start == "" {
 				continue
 			}
@@ -188,7 +195,7 @@ func main() {
 	fmt.Println("https://www.aliyundrive.com/s/6riFVSGytcv")
 	fmt.Println("我用阿里云盘分享了「loli.7z.png」，你可以不限速下载🚀 复制这段内容打开「阿里云盘」App 即可获取 链接：https://www.aliyundrive.com/s/bEBTKwaCK4K")
 	fmt.Println("------------------------------------------------")
-	fmt.Print("0.单个检测\n1.批量检测（读取软件运行目录url.txt文件里的每一行链接，检测完自动将有效链接写入到loli.txt）\n")
+	fmt.Print("0.单个检测\n1.批量检测（读取软件运行目录url.txt文件里的每一行链接，检测完自动将有效链接导出至loli.txt）\n")
 	fmt.Println("------------------------------------------------")
 	fmt.Print("num:")
 	fmt.Scanln(&num)
