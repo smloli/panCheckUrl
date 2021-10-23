@@ -6,26 +6,29 @@ import (
 	"net/http"
 	"strings"
 	"os"
-	"path/filepath"
 	"regexp"
 	"encoding/json"
 	"io/ioutil"
 )
 
 type Url struct{
-	urlList []string
+	urlList []string // 链接列表
+	id map[string]bool // 链接ID
+	validUrl []string // 有效链接
+	errUrl []string // 无效链接
 }
 
+// 阿里返回状态码
+type RespCode struct{
+    Code string
+	Share_name string
+}
+
+// 为了获取重定向的location，要重新实现一个http.Client
 var client = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 	return http.ErrUseLastResponse
 	},
-}
-
-
-type RespCode struct{
-    Code string
-	Share_name string
 }
 
 func aliYunCheck(_url string) (start string, shareName string) {
@@ -85,14 +88,23 @@ func baiduYunCheck(_url string) (start string) {
 }
 
 // 检测链接有效性
-func (url *Url) checkUrl(flag bool, path string) {
+func (url *Url) checkUrl(flag bool) {
 	// 有效列表
-	oklist := make([]string, 1)
+	url.validUrl = make([]string, 1)
+	url.id = make(map[string]bool, 1)
+	url.errUrl = make([]string, 1)
 	var start string
 	var shareName string
-	// 为了获取重定向的location，要重新实现一个http.Client
-	
+	var repeatUrl int //重复链接计数
 	for _, _url := range (*url).urlList {
+		// 去重
+		if url.id[_url] == false {
+			url.id[_url] = true
+		} else {
+			fmt.Printf("发现重复链接，已跳过！  %s \n", _url)
+			repeatUrl++
+			continue
+		}
 		index := strings.Index(_url, "baidu")
 		if index != -1 {
 			start = baiduYunCheck(_url)
@@ -111,42 +123,65 @@ func (url *Url) checkUrl(flag bool, path string) {
 			}
 			log.Printf("%s  %s\n", _url, start)
 		}
-		if flag == true && start == "×" {
-			if oklist[0] == "" {
-				oklist[0] = _url
+		if flag == true && start == "√" {
+			if url.validUrl[0] == "" {
+				url.validUrl[0] = _url
 				continue
 			}
-			oklist = append(oklist, []string{_url}...)
+			url.validUrl = append(url.validUrl, []string{_url}...)
+		} else if start == "×" {
+			if url.errUrl[0] == "" {
+				url.errUrl[0] = _url
+				continue
+			}
+			url.errUrl = append(url.errUrl, []string{_url}...)
 		}
 	}
 	// 当flag为true时，将oklist里的内容写入到loli.txt
+	// 失效链接写入失效链接.txt
 	if flag == true {
-		f, err := os.Create(path + "loli.txt")
+		floli, err := os.Create("loli.txt")
 		if err != nil {
 			log.Fatal(err)
 		}
-		for _, v := range oklist {
-			_, err := f.WriteString(v + "\n")
+		for _, v := range url.validUrl {
+			_, err := floli.WriteString(v + "\n")
 			if err != nil {
 				fmt.Println(err)
 			}
 		}
-		f.Close()
+		floli.Close()
+		ferrUrl, err := os.Create("失效链接.txt")
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, v := range url.errUrl {
+			_, err := ferrUrl.WriteString(v + "\n")
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		ferrUrl.Close()
+	}
+	fmt.Println("--------------------检测结果--------------------")
+	fmt.Printf("有效链接：%d/%d\n", len(url.validUrl), len(url.urlList))
+	fmt.Printf("失效链接：%d/%d\n", len(url.errUrl), len(url.urlList))
+	if repeatUrl != 0 {
+		fmt.Printf("重复链接：%d/%d\n", repeatUrl, len(url.urlList))
 	}
 }
 
 // 读取url.txt文件里的链接
-func (url *Url) getUrlList(path string) {
-    txtPath := path + "url.txt"
-	f, err := os.Open(txtPath)
+func (url *Url) getUrlList() {
+	f, err := os.Open("url.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
-    fileinfo, err := os.Stat(txtPath)
+    fi, _ := f.Stat()
     if err != nil {
-        log.Fatal("软件运行目录里未找到文件url.txt")
+        log.Fatal("url.txt文件不存在")
     }
-    data := make([]byte, fileinfo.Size())
+    data := make([]byte, fi.Size())
     _, err = f.Read(data)
     if err != nil {
         log.Fatal(err)
@@ -157,7 +192,7 @@ func (url *Url) getUrlList(path string) {
 
 // 正则匹配url
 func (url *Url) regexpUrl(data *[]byte) {
-	re, err := regexp.Compile("(http[s]?://.+?/s/[\\w _ -]+)")
+	re, err := regexp.Compile("(http[s]?://[www pan]+.[a-z]+.com/s/[0-9 a-z A-Z _ -]+)")
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -178,10 +213,8 @@ func main() {
 	var num string
 	var loli string
 	var tmp string
-	var flag bool  // 批量检测自动将有效链接写入文件
+	var flag bool  // 检测模式
 	url.urlList = make([]string, 1)
-	// 自动匹配当前系统的路径分隔符
-	urlPath := filepath.Dir(os.Args[0]) + filepath.FromSlash("/")
 	fmt.Println("-------------百度、阿里云盘链接有效性检测-------------")
 	fmt.Println()
 	fmt.Println("-----------------支持的链接格式-----------------")
@@ -211,7 +244,7 @@ func main() {
             url.regexpUrl(&urlData)
 		case "1":
 			flag = true
-			url.getUrlList(urlPath)
+			url.getUrlList()
 	}
-	url.checkUrl(flag, urlPath)
+	url.checkUrl(flag)
 }
