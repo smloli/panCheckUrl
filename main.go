@@ -47,15 +47,12 @@ func aliYunCheck(_url string) (start string, shareName string) {
     defer resp.Body.Close()
     body, _ := ioutil.ReadAll(resp.Body)
     json.Unmarshal(body, &respcode)
-    switch respcode.Code {
-        case "" :
-            start = "✔️"
-            shareName = respcode.Share_name
-        case "ShareLink.Cancelled":
-            start = "❌"
-        case "ShareLink.Forbidden":
-            start = "🔞"
-    }
+	if respcode.Code == "" {
+		start = "√"
+		shareName = respcode.Share_name
+	} else {
+		start = "×"
+	}
     return
 }
 
@@ -80,9 +77,9 @@ func baiduYunCheck(_url string) (start string) {
 	// 检测链接是否失效
 	index := strings.Index(locationUrl, "error")
 	if index != -1 {
-		start = "❌"
+		start = "×"
 	} else {
-		start = "✔️"
+		start = "√"
 	}
 	return
 }
@@ -106,7 +103,7 @@ func (url *Url) checkUrl(flag bool, path string) {
 		} else {
 			start, shareName = aliYunCheck(_url)
 			// 输出阿里云盘分享链接的文件名
-			if start == "✔️" {
+			if start == "√" {
 				_url = shareName + " " + _url
 			}
 			if start == "" {
@@ -114,7 +111,7 @@ func (url *Url) checkUrl(flag bool, path string) {
 			}
 			log.Printf("%s  %s\n", _url, start)
 		}
-		if flag == true && start == "✔️" {
+		if flag == true && start == "×" {
 			if oklist[0] == "" {
 				oklist[0] = _url
 				continue
