@@ -31,9 +31,8 @@ var client = &http.Client{
 	},
 }
 
-func aliYunCheck(_url string) (start string, shareName string) {
-    client := &http.Client{}
-    share_id := _url[30:]
+func aliYunCheck(_url *string) (start string, shareName string) {
+    share_id := (*_url)[30:]
     var respcode RespCode
     url := "https://api.aliyundrive.com/adrive/v3/share_link/get_share_by_anonymous?share_id=" + share_id
     param := map[string]string{
@@ -59,11 +58,11 @@ func aliYunCheck(_url string) (start string, shareName string) {
     return
 }
 
-func baiduYunCheck(_url string) (start string) {
+func baiduYunCheck(_url *string) (start string) {
 	// 访问网盘链接
-	req, _ := http.NewRequest("GET", _url, nil)
+	req, _ := http.NewRequest("GET", *_url, nil)
 	// UA必须是手机的，否则网页不会重定向
-	req.Header.Add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1 Edg/94.0.4606.81")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1 Edg/94.0.4606.81")
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Println(err)
@@ -91,14 +90,14 @@ func baiduYunCheck(_url string) (start string) {
 func (url *Url) checkUrl(flag bool) {
 	// 有效列表
 	url.validUrl = make([]string, 1)
-	url.id = make(map[string]bool, 1)
+	url.id = make(map[string]bool)
 	url.errUrl = make([]string, 1)
 	var start string
 	var shareName string
 	var repeatUrl int //重复链接计数
 	for _, _url := range (*url).urlList {
 		// 去重
-		if url.id[_url] == false {
+		if !url.id[_url] {
 			url.id[_url] = true
 		} else {
 			fmt.Printf("发现重复链接，已跳过！  %s \n", _url)
@@ -107,39 +106,41 @@ func (url *Url) checkUrl(flag bool) {
 		}
 		index := strings.Index(_url, "baidu")
 		if index != -1 {
-			start = baiduYunCheck(_url)
+			start = baiduYunCheck(&_url)	// 百度网盘检测
 			if start == "" {
 				continue
 			}
 			log.Printf("%s  %s\n", _url, start)
 		} else {
-			start, shareName = aliYunCheck(_url)
+			start, shareName = aliYunCheck(&_url)	// 阿里云盘检测
 			// 输出阿里云盘分享链接的文件名
 			if start == "√" {
 				_url = shareName + " " + _url
-			}
-			if start == "" {
+			} else if start == "" {
 				continue
 			}
 			log.Printf("%s  %s\n", _url, start)
 		}
-		if flag == true && start == "√" {
-			if url.validUrl[0] == "" {
-				url.validUrl[0] = _url
-				continue
+		// flag == true 就记录
+		if flag {
+			if start == "√" {
+				if url.validUrl[0] == "" {
+					url.validUrl[0] = _url
+					continue
+				}
+				url.validUrl = append(url.validUrl, []string{_url}...)
+			} else if start == "×"{
+				if url.errUrl[0] == "" {
+					url.errUrl[0] = _url
+					continue
+				}
+				url.errUrl = append(url.errUrl, []string{_url}...)
 			}
-			url.validUrl = append(url.validUrl, []string{_url}...)
-		} else if start == "×" {
-			if url.errUrl[0] == "" {
-				url.errUrl[0] = _url
-				continue
-			}
-			url.errUrl = append(url.errUrl, []string{_url}...)
 		}
 	}
 	// 当flag为true时，将oklist里的内容写入到loli.txt
 	// 失效链接写入失效链接.txt
-	if flag == true {
+	if flag {
 		floli, err := os.Create("loli.txt")
 		if err != nil {
 			log.Fatal(err)
