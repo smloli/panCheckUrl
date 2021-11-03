@@ -32,6 +32,7 @@ var client = &http.Client{
 }
 
 func aliYunCheck(_url *string) (start string, shareName string) {
+	log.SetPrefix("aliYunCheck():")
     share_id := (*_url)[30:]
     var respcode RespCode
     url := "https://api.aliyundrive.com/adrive/v3/share_link/get_share_by_anonymous?share_id=" + share_id
@@ -44,7 +45,8 @@ func aliYunCheck(_url *string) (start string, shareName string) {
     req.Header.Set("Referer", "https://www.aliyundrive.com/")
     resp, err := client.Do(req)
     if err != nil {
-        log.Fatal(err)
+        log.Print(err)
+		return
     }
     defer resp.Body.Close()
     body, _ := ioutil.ReadAll(resp.Body)
@@ -59,21 +61,22 @@ func aliYunCheck(_url *string) (start string, shareName string) {
 }
 
 func baiduYunCheck(_url *string) (start string) {
+	log.SetPrefix("baiduYunCheck():")
 	// 访问网盘链接
 	req, _ := http.NewRequest("GET", *_url, nil)
 	// UA必须是手机的，否则网页不会重定向
 	req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1 Edg/94.0.4606.81")
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println(err)
-		return ""
+		log.Print(err)
+		return
 	}
 	defer resp.Body.Close()
 	// 获取重定向地址
 	location, err := resp.Location()
 	if err != nil {
-		log.Println(err)
-		return ""
+		log.Print(err)
+		return
 	}
 	locationUrl := location.String()
 	// 检测链接是否失效
@@ -95,6 +98,21 @@ func (url *Url) checkUrl(flag bool) {
 	var start string
 	var shareName string
 	var repeatUrl int //重复链接计数
+	count := 1	//链接计数
+	ferror, err := os.OpenFile("error.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	log.SetPrefix("checkUrl():")
+	log.SetOutput(ferror)
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Print(err)
+		}
+		ferror.Close()
+	}()
 	for _, _url := range (*url).urlList {
 		// 去重
 		if !url.id[_url] {
@@ -110,7 +128,7 @@ func (url *Url) checkUrl(flag bool) {
 			if start == "" {
 				continue
 			}
-			log.Printf("%s  %s\n", _url, start)
+			fmt.Printf("%d  %s  %s\n", count, _url, start)
 		} else {
 			start, shareName = aliYunCheck(&_url)	// 阿里云盘检测
 			// 输出阿里云盘分享链接的文件名
@@ -119,8 +137,9 @@ func (url *Url) checkUrl(flag bool) {
 			} else if start == "" {
 				continue
 			}
-			log.Printf("%s  %s\n", _url, start)
+			fmt.Printf("%d  %s  %s\n", count, _url, start)
 		}
+		count++
 		// flag == true 就记录
 		if flag {
 			if start == "√" {
@@ -143,7 +162,8 @@ func (url *Url) checkUrl(flag bool) {
 	if flag {
 		floli, err := os.Create("loli.txt")
 		if err != nil {
-			log.Fatal(err)
+			fmt.Println(err)
+			return
 		}
 		for _, v := range url.validUrl {
 			_, err := floli.WriteString(v + "\n")
@@ -154,7 +174,8 @@ func (url *Url) checkUrl(flag bool) {
 		floli.Close()
 		ferrUrl, err := os.Create("失效链接.txt")
 		if err != nil {
-			log.Fatal(err)
+			fmt.Println(err)
+			return
 		}
 		for _, v := range url.errUrl {
 			_, err := ferrUrl.WriteString(v + "\n")
