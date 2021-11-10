@@ -16,6 +16,7 @@ type Url struct{
 	id map[string]bool // 链接ID
 	validUrl []string // 有效链接
 	errUrl []string // 无效链接
+	Pwd map[string]string	//提取码map
 }
 
 // 阿里返回状态码
@@ -128,12 +129,14 @@ func (url *Url) checkUrl(flag bool) {
 			if start == "" {
 				continue
 			}
+			_url += " " + url.Pwd[_url]
 			fmt.Printf("%d  %s  %s\n", count, _url, start)
 		} else {
 			start, shareName = aliYunCheck(&_url)	// 阿里云盘检测
 			// 输出阿里云盘分享链接的文件名
 			if start == "√" {
-				_url = shareName + " " + _url
+				// 有提取码的加入提取码，没有的默认为空
+				_url = shareName + " " + _url + " " + url.Pwd[_url]
 			} else if start == "" {
 				continue
 			}
@@ -199,6 +202,7 @@ func (url *Url) getUrlList() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer f.Close()
     fi, _ := f.Stat()
     if err != nil {
         log.Fatal("url.txt文件不存在")
@@ -209,16 +213,20 @@ func (url *Url) getUrlList() {
         log.Fatal(err)
     }
     url.regexpUrl(&data)
-    f.Close()
 }
 
 // 正则匹配url
 func (url *Url) regexpUrl(data *[]byte) {
-	re, err := regexp.Compile("(http[s]?://[www pan]+.[a-z]+.com/s/[0-9 a-z A-Z _ -]+)")
-	if err != nil {
-		fmt.Println(err)
-	}
+	url.Pwd = make(map[string]string)
+	// 无提取码规则
+	re := regexp.MustCompile("(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)")
+	// 提取码规则1
+	rePwd1 := regexp.MustCompile(`(提取码: [0-9a-zA-Z]{4})\s?\n链接：(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)`)
+	// 提取码规则2	百度、阿里云都适用
+	rePwd2 := regexp.MustCompile(`(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)\s(提取码:[\s]?[0-9a-zA-Z]{4})`)
 	res := re.FindAllSubmatch(*data, -1)
+	resPwd1 := rePwd1.FindAllSubmatch(*data, -1)
+	resPwd2 := rePwd2.FindAllSubmatch(*data, -1)
     // 将匹配到的url写入到url.urlList
     for _, v := range res {
 		_url := strings.TrimSpace(string(v[1]))
@@ -227,6 +235,15 @@ func (url *Url) regexpUrl(data *[]byte) {
 			continue
 		}
 		url.urlList = append(url.urlList, []string{_url}...)
+	}
+	// 将有提取码的链接写到map里
+	for _, v := range resPwd1 {
+		_url := strings.TrimSpace(string(v[2]))
+		url.Pwd[_url] = string(v[1])
+	}
+	for _, v := range resPwd2 {
+		_url := strings.TrimSpace(string(v[1]))
+		url.Pwd[_url] = string(v[2])
 	}
 }
 
