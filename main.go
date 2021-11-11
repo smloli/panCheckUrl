@@ -90,6 +90,24 @@ func baiduYunCheck(_url *string) (start string) {
 	return
 }
 
+func Check115(_url *string) (start string) {
+	log.SetPrefix("Check115():")
+	url := "https://webapi.115.com/share/snap?share_code=" + (*_url)[18:]
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Print(err)
+		return ""
+	}
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	if index := strings.Index(string(body), `"errno":4100012`); index != -1 {
+		start = "√"
+	} else {
+		start = "×"
+	}
+	return
+}
+
 // 检测链接有效性
 func (url *Url) checkUrl(flag bool) {
 	// 有效列表
@@ -123,15 +141,16 @@ func (url *Url) checkUrl(flag bool) {
 			repeatUrl++
 			continue
 		}
-		index := strings.Index(_url, "baidu")
-		if index != -1 {
+		index := _url[8:11]
+		switch index {
+		case "pan":
 			start = baiduYunCheck(&_url)	// 百度网盘检测
 			if start == "" {
 				continue
 			}
 			_url += " " + url.Pwd[_url]
 			fmt.Printf("%d  %s  %s\n", count, _url, start)
-		} else {
+		case "www":
 			start, shareName = aliYunCheck(&_url)	// 阿里云盘检测
 			// 输出阿里云盘分享链接的文件名
 			if start == "√" {
@@ -140,6 +159,13 @@ func (url *Url) checkUrl(flag bool) {
 			} else if start == "" {
 				continue
 			}
+			fmt.Printf("%d  %s  %s\n", count, _url, start)
+		case "115":
+			start = Check115(&_url)
+			if start == "" {
+				continue
+			}
+			_url += url.Pwd[_url]
 			fmt.Printf("%d  %s  %s\n", count, _url, start)
 		}
 		count++
@@ -218,16 +244,25 @@ func (url *Url) getUrlList() {
 // 正则匹配url
 func (url *Url) regexpUrl(data *[]byte) {
 	url.Pwd = make(map[string]string)
-	// 无提取码规则
+	// 百度 阿里匹配链接
 	re := regexp.MustCompile("(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)")
-	// 提取码规则1
+	// 115匹配链接
+	re115 := regexp.MustCompile("(https://115.com/s/.+?)[? #]+")
+	// 提取码规则1 阿里
 	rePwd1 := regexp.MustCompile(`(提取码: [0-9a-zA-Z]{4})\s?\n链接：(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)`)
 	// 提取码规则2	百度、阿里云都适用
 	rePwd2 := regexp.MustCompile(`(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)\s(提取码:[\s]?[0-9a-zA-Z]{4})`)
+	// 115提取码规则1
+	rePwd3 := regexp.MustCompile(`(https://115.com/s/[0-9a-zA-Z]+)#\r\n.+?\n访问码：(.{4})`)
+	// 115提取码规则2
+	rePwd4 := regexp.MustCompile(`(https://115.com/s/.+?)[? #]+password=(.{4})`)
 	res := re.FindAllSubmatch(*data, -1)
+	res115 := re115.FindAllSubmatch(*data, -1)
 	resPwd1 := rePwd1.FindAllSubmatch(*data, -1)
 	resPwd2 := rePwd2.FindAllSubmatch(*data, -1)
-    // 将匹配到的url写入到url.urlList
+	resPwd3 := rePwd3.FindAllSubmatch(*data, -1)
+	resPwd4 := rePwd4.FindAllSubmatch(*data, -1)
+    // 将匹配到的阿里、百度链接写入到url.urlList
     for _, v := range res {
 		_url := strings.TrimSpace(string(v[1]))
         if url.urlList[0] == "" {
@@ -236,7 +271,16 @@ func (url *Url) regexpUrl(data *[]byte) {
 		}
 		url.urlList = append(url.urlList, []string{_url}...)
 	}
-	// 将有提取码的链接写到map里
+	// 115链接写入url.urlList
+	for _, v := range res115 {
+		_url := strings.TrimSpace(string(v[1]))
+        if url.urlList[0] == "" {
+			url.urlList[0] = _url
+			continue
+		}
+		url.urlList = append(url.urlList, []string{_url}...)
+	}
+	// 将百度、阿里提取码和链接写到map里
 	for _, v := range resPwd1 {
 		_url := strings.TrimSpace(string(v[2]))
 		url.Pwd[_url] = string(v[1])
@@ -244,6 +288,35 @@ func (url *Url) regexpUrl(data *[]byte) {
 	for _, v := range resPwd2 {
 		_url := strings.TrimSpace(string(v[1]))
 		url.Pwd[_url] = string(v[2])
+	}
+	// 115提取码和链接写到map里
+	for _, v := range resPwd3 {
+		_url := strings.TrimSpace(string(v[1]))
+		url.Pwd[_url] = "?password=" + string(v[2])
+	}
+	for _, v := range resPwd4 {
+		_url := strings.TrimSpace(string(v[1]))
+		url.Pwd[_url] = "?password=" + string(v[2])
+	}
+}
+
+// 检测版本
+func init() {
+	const version = "v2.0.7"
+	url := "https://docs.qq.com/dop-api/opendoc?id=DT3NEWFlERWdsSU5l&normal=1"
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Println("检测版本错误！")
+	}
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	re := regexp.MustCompile("loli{(.+?),(.+?),(.+?)}loli")
+	res := re.FindAllSubmatch(body, -1)
+	ver := string(res[0][1])
+	updateContent := string(res[0][2])
+	link := strings.Split(string(res[0][3]), "\\n")
+	if ver != version {
+		fmt.Printf("当前版本：%s\n最新版本：%s\n更新内容：%s\n阿里云盘：%s\nGithub：%s\n", version, ver, updateContent, link[0], link[1])
 	}
 }
 
@@ -254,17 +327,8 @@ func main() {
 	var tmp string
 	var flag bool  // 检测模式
 	url.urlList = make([]string, 1)
-	fmt.Println("-------------百度、阿里云盘链接有效性检测-------------")
-	fmt.Println()
-	fmt.Println("-----------------支持的链接格式-----------------")
-	fmt.Println("https://pan.baidu.com/s/1lXSQI-33cEXB8GMXNAFlrQ")
-	fmt.Println("链接:https://pan.baidu.com/s/1U88Wwm560vbvyJX0cw9J-Q 提取码:7deh")
-	fmt.Println("链接: http://pan.baidu.com/s/1c0Er78G 密码: 2cci")
-	fmt.Println("链接: https://pan.baidu.com/s/1YZnL2-TC3Wy5bshU7fntxg 提取码: qku6 复制这段内容后打开百度网盘手机App，操作更方便哦")
-	fmt.Println("https://www.aliyundrive.com/s/6riFVSGytcv")
-	fmt.Println("我用阿里云盘分享了「loli.7z.png」，你可以不限速下载🚀 复制这段内容打开「阿里云盘」App 即可获取 链接：https://www.aliyundrive.com/s/bEBTKwaCK4K")
-	fmt.Println("------------------------------------------------")
-	fmt.Print("0.单个检测\n1.批量检测（读取软件运行目录url.txt文件里的每一行链接，检测完自动将有效链接导出至loli.txt）\n")
+	fmt.Println("-------------百度、阿里、115云盘链接有效性检测-------------")
+	fmt.Print("0.单个检测\n1.批量检测（读取软件运行目录url.txt里的链接，检测完自动将有效链接导出至loli.txt）\n")
 	fmt.Println("------------------------------------------------")
 	fmt.Print("num:")
 	fmt.Scanln(&num)
