@@ -226,13 +226,10 @@ func (url *Url) checkUrl(flag bool) {
 func (url *Url) getUrlList() {
 	f, err := os.Open("url.txt")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("url.txt文件不存在", err)
 	}
 	defer f.Close()
     fi, _ := f.Stat()
-    if err != nil {
-        log.Fatal("url.txt文件不存在")
-    }
     data := make([]byte, fi.Size())
     _, err = f.Read(data)
     if err != nil {
@@ -306,7 +303,7 @@ func init() {
 	url := "https://docs.qq.com/dop-api/opendoc?id=DT3NEWFlERWdsSU5l&normal=1"
 	resp, err := http.Get(url)
 	if err != nil {
-		fmt.Println("检测版本错误！")
+		log.Fatal("检测版本错误！")
 	}
 	defer resp.Body.Close()
 	body, _ := ioutil.ReadAll(resp.Body)
