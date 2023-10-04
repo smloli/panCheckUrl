@@ -1,350 +1,404 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"strings"
 	"os"
+	"path/filepath"
 	"regexp"
-	"encoding/json"
-	"io/ioutil"
+	"runtime"
+	"strings"
+
+	"github.com/mitchellh/go-ps"
 )
 
-type Url struct{
-	urlList []string // 链接列表
-	id map[string]bool // 链接ID
-	validUrl []string // 有效链接
-	errUrl []string // 无效链接
-	Pwd map[string]string	//提取码map
+// 判断当前终端是否支持输出颜色
+var outputColor = true
+
+type Loli struct {
+	urlList []string          // 链接列表
+	id      map[string]bool   // 链接ID
+	okUrl   []string          // 有效链接
+	errUrl  []string          // 无效链接
+	Pwd     map[string]string //提取码map
 }
 
-// 阿里返回状态码
-type RespCode struct{
-    Code string
+// 阿里
+type AliResponse struct {
+	Code       string
 	Share_name string
 }
 
-// 为了获取重定向的location，要重新实现一个http.Client
+// 夸克
+type QuarkResponse struct {
+	Code int
+}
+
 var client = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-	return http.ErrUseLastResponse
+		return http.ErrUseLastResponse
 	},
 }
 
-func aliYunCheck(_url *string) (start string, shareName string) {
-	log.SetPrefix("aliYunCheck():")
-    share_id := (*_url)[30:]
-    var respcode RespCode
-    url := "https://api.aliyundrive.com/adrive/v3/share_link/get_share_by_anonymous?share_id=" + share_id
-    param := map[string]string{
-        "share_id": share_id,
-    }
-    jsonParam, _ := json.Marshal(param)
-    req, _ := http.NewRequest("POST", url, strings.NewReader(string(jsonParam)))
-    req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 11; SM-G9880) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.37 Mobile Safari/537.36")
-    req.Header.Set("Referer", "https://www.aliyundrive.com/")
-    resp, err := client.Do(req)
-    if err != nil {
-        log.Print(err)
-		return
-    }
-    defer resp.Body.Close()
-    body, _ := ioutil.ReadAll(resp.Body)
-    json.Unmarshal(body, &respcode)
-	if respcode.Code == "" {
-		start = "√"
-		shareName = respcode.Share_name
-	} else {
-		start = "×"
+func get(url string, headers map[string]string) (*http.Response, []byte, error) {
+	req, _ := http.NewRequest("GET", url, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
-    return
-}
-
-func baiduYunCheck(_url *string) (start string) {
-	log.SetPrefix("baiduYunCheck():")
-	// 访问网盘链接
-	req, _ := http.NewRequest("GET", *_url, nil)
-	// UA必须是手机的，否则网页不会重定向
-	req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1 Edg/94.0.4606.81")
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Print(err)
-		return
+		log.Println(err)
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp, data, nil
+}
+
+func post(url string, headers map[string]string, body io.Reader) ([]byte, error) {
+	req, _ := http.NewRequest("POST", url, body)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return data, nil
+}
+
+func aliYunCheck(url string) (ok bool) {
+	var r AliResponse
+	log.SetPrefix("aliYunCheck():")
+	share_id := (url)[30:]
+	url = "https://api.aliyundrive.com/adrive/v3/share_link/get_share_by_anonymous?share_id=" + share_id
+	param := map[string]string{
+		"share_id": share_id,
+	}
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Linux; Android 11; SM-G9880) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.37 Mobile Safari/537.36",
+		"Referer":    "https://www.aliyundrive.com/",
+	}
+	data, _ := json.Marshal(param)
+	resp, err := post(url, headers, bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	json.Unmarshal(resp, &r)
+	return r.Code == ""
+}
+
+func quarkCheck(url string) (ok bool) {
+	var r QuarkResponse
+	log.SetPrefix("quarkCheck():")
+	re := regexp.MustCompile(`https://pan.quark.cn/s/(\w+)[\?]?`)
+	pwd_id := re.FindStringSubmatch(url)[1]
+	url = "https://pan.quark.cn/1/clouddrive/share/sharepage/token?pr=ucpro&fr=h5"
+	param := map[string]string{
+		"pwd_id": pwd_id,
+	}
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36",
+		"Referer":    "https://pan.quark.cn",
+	}
+	data, _ := json.Marshal(param)
+	resp, err := post(url, headers, bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	json.Unmarshal(resp, &r)
+	return (r.Code == 0 || r.Code == 41008)
+}
+
+func baiduYunCheck(url string) bool {
+	log.SetPrefix("baiduYunCheck():")
 	// 获取重定向地址
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1 Edg/94.0.4606.81",
+	}
+
+	resp, _, err := get(url, headers)
+	if err != nil {
+		return false
+	}
 	location, err := resp.Location()
 	if err != nil {
 		log.Print(err)
-		return
+		return false
 	}
 	locationUrl := location.String()
 	// 检测链接是否失效
-	index := strings.Index(locationUrl, "error")
-	if index != -1 {
-		start = "×"
-	} else {
-		start = "√"
-	}
-	return
+	errorIndex := strings.Index(locationUrl, "error")
+	return errorIndex == -1
 }
 
-func Check115(_url *string) (start string) {
+func Check115(url string) bool {
 	log.SetPrefix("Check115():")
-	url := "https://webapi.115.com/share/snap?share_code=" + (*_url)[18:]
-	resp, err := http.Get(url)
+	url = "https://webapi.115.com/share/snap?share_code=" + url[18:]
+	_, data, err := get(url, nil)
 	if err != nil {
-		log.Print(err)
-		return ""
+		return false
 	}
-	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
-	if index := strings.Index(string(body), `"errno":4100012`); index != -1 {
-		start = "√"
+	errorIndex := strings.Index(string(data), `"errno":4100012`)
+	return errorIndex != -1
+}
+
+func printColor(str string, ok bool) {
+	if ok {
+		fmt.Println(str)
 	} else {
-		start = "×"
+		if outputColor {
+			fmt.Printf("\033[0;31;40m%s\033[0m\n", str)
+		} else {
+			fmt.Printf("%s x\n", str)
+		}
 	}
-	return
 }
 
 // 检测链接有效性
-func (url *Url) checkUrl(flag bool) {
-	// 有效列表
-	url.validUrl = make([]string, 1)
-	url.id = make(map[string]bool)
-	url.errUrl = make([]string, 1)
-	var start string
-	var shareName string
+func (loli *Loli) checkUrl() {
+	dominlist := []string{"pan.baidu", "aliyundrive", "115.com", "pan.quark"}
+	loli.id = make(map[string]bool)
+	var ok bool
 	var repeatUrl int //重复链接计数
-	count := 1	//链接计数
-	ferror, err := os.OpenFile("error.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	basePath, _ := os.Executable()
+	errPath := filepath.Join(filepath.Dir(basePath), "error.log")
+	errFile, err := os.Create(errPath)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	log.SetPrefix("checkUrl():")
-	log.SetOutput(ferror)
+	log.SetOutput(errFile)
 	defer func() {
 		err := recover()
 		if err != nil {
 			log.Print(err)
 		}
-		ferror.Close()
+		errFile.Close()
 	}()
-	for _, _url := range (*url).urlList {
+	for count, url := range loli.urlList {
 		// 去重
-		if !url.id[_url] {
-			url.id[_url] = true
+		if !loli.id[url] {
+			loli.id[url] = true
 		} else {
-			fmt.Printf("发现重复链接，已跳过！  %s \n", _url)
+			str := fmt.Sprintf("%d 重复链接，已忽略 %s", count+1, url)
+			printColor(str, false)
 			repeatUrl++
+			// count++
 			continue
 		}
-		index := _url[8:11]
+		var index int
+		for i, v := range dominlist {
+			if index = strings.Index(url, v); index != -1 {
+				index = i
+				break
+			}
+		}
+		var str string
 		switch index {
-		case "pan":
-			start = baiduYunCheck(&_url)	// 百度网盘检测
-			if start == "" {
-				continue
-			}
-			_url += " " + url.Pwd[_url]
-			fmt.Printf("%d  %s  %s\n", count, _url, start)
-		case "www":
-			start, shareName = aliYunCheck(&_url)	// 阿里云盘检测
+		case 0:
+			ok = baiduYunCheck(url) // 百度网盘检测
+			str = fmt.Sprintf("%d %s %s", count+1, url, loli.Pwd[url])
+			printColor(str, ok)
+		case 1:
+			ok = aliYunCheck(url) // 阿里云盘检测
+			// 有提取码的加入提取码，没有的默认为空
 			// 输出阿里云盘分享链接的文件名
-			if start == "√" {
-				// 有提取码的加入提取码，没有的默认为空
-				_url = shareName + " " + _url + " " + url.Pwd[_url]
-			} else if start == "" {
-				continue
-			}
-			fmt.Printf("%d  %s  %s\n", count, _url, start)
-		case "115":
-			start = Check115(&_url)
-			if start == "" {
-				continue
-			}
-			_url += url.Pwd[_url]
-			fmt.Printf("%d  %s  %s\n", count, _url, start)
+			str = fmt.Sprintf("%d %s %s", count+1, url, loli.Pwd[url])
+			printColor(str, ok)
+		case 2:
+			ok = Check115(url)
+			str = fmt.Sprintf("%d %s %s", count+1, url, loli.Pwd[url])
+			printColor(str, ok)
+		case 3:
+			ok = quarkCheck(url)
+			str = fmt.Sprintf("%d %s%s", count+1, url, loli.Pwd[url])
+			printColor(str, ok)
 		}
-		count++
-		// flag == true 就记录
-		if flag {
-			if start == "√" {
-				if url.validUrl[0] == "" {
-					url.validUrl[0] = _url
-					continue
-				}
-				url.validUrl = append(url.validUrl, []string{_url}...)
-			} else if start == "×"{
-				if url.errUrl[0] == "" {
-					url.errUrl[0] = _url
-					continue
-				}
-				url.errUrl = append(url.errUrl, []string{_url}...)
-			}
+		if ok {
+			loli.okUrl = append(loli.okUrl, url)
+		} else {
+			loli.errUrl = append(loli.errUrl, url)
 		}
 	}
-	// 当flag为true时，将oklist里的内容写入到loli.txt
-	// 失效链接写入失效链接.txt
-	if flag {
-		floli, err := os.Create("loli.txt")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		for _, v := range url.validUrl {
-			_, err := floli.WriteString(v + "\n")
-			if err != nil {
-				fmt.Println(err)
-			}
-		}
-		floli.Close()
-		ferrUrl, err := os.Create("失效链接.txt")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		for _, v := range url.errUrl {
-			_, err := ferrUrl.WriteString(v + "\n")
-			if err != nil {
-				fmt.Println(err)
-			}
-		}
-		ferrUrl.Close()
+	okUrlPath := filepath.Join(filepath.Dir(basePath), "有效链接.txt")
+	f, err := os.Create(okUrlPath)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
+	for _, v := range loli.okUrl {
+		_, err := f.WriteString(v + "\n")
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+	f.Close()
+	errUrlPath := filepath.Join(filepath.Dir(basePath), "失效链接.txt")
+	f, err = os.Create(errUrlPath)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, v := range loli.errUrl {
+		_, err := f.WriteString(v + "\n")
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+	f.Close()
 	fmt.Println("--------------------检测结果--------------------")
-	fmt.Printf("有效链接：%d/%d\n", len(url.validUrl), len(url.urlList))
-	fmt.Printf("失效链接：%d/%d\n", len(url.errUrl), len(url.urlList))
+	fmt.Printf("有效链接：%d/%d\n", len(loli.okUrl), len(loli.urlList))
+	fmt.Printf("失效链接：%d/%d\n", len(loli.errUrl), len(loli.urlList))
 	if repeatUrl != 0 {
-		fmt.Printf("重复链接：%d/%d\n", repeatUrl, len(url.urlList))
+		fmt.Printf("重复链接：%d/%d\n", repeatUrl, len(loli.urlList))
 	}
+}
+
+// 按任意键退出...
+func enterKeyExit() {
+	fmt.Print("按任意键退出...")
+	fmt.Scanln()
+	os.Exit(0)
 }
 
 // 读取url.txt文件里的链接
-func (url *Url) getUrlList() {
-	f, err := os.Open("url.txt")
+func (loli *Loli) getUrlList() error {
+	var path string
+	fmt.Print("请将要检测的文件拖动到这里:")
+	fmt.Scanln(&path)
+	f, err := os.Open(path)
 	if err != nil {
-		log.Fatal("url.txt文件不存在", err)
+		return err
 	}
 	defer f.Close()
-    fi, _ := f.Stat()
-    data := make([]byte, fi.Size())
-    _, err = f.Read(data)
-    if err != nil {
-        log.Fatal(err)
-    }
-    url.regexpUrl(&data)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	loli.regexpUrl(data)
+	return nil
 }
 
 // 正则匹配url
-func (url *Url) regexpUrl(data *[]byte) {
-	url.Pwd = make(map[string]string)
+func (loli *Loli) regexpUrl(data []byte) {
+	loli.Pwd = make(map[string]string)
 	// 百度 阿里匹配链接
-	re := regexp.MustCompile("(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)")
+	rebaiduAli := regexp.MustCompile(`(http[s]?://[www pan]+.[a-z]+.com/s/[\w-]+)`)
 	// 115匹配链接
 	re115 := regexp.MustCompile("(https://115.com/s/.+?)[? #]+")
+	// 夸克匹配链接
+	reQuark := regexp.MustCompile(`https://pan.quark.cn/s/\w+`)
 	// 提取码规则1 阿里
-	rePwd1 := regexp.MustCompile(`(提取码: [0-9a-zA-Z]{4})\s?\n链接：(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)`)
+	rebaiduAliPwd := regexp.MustCompile(`(提取码: \w{4})\s?\n链接：(http[s]?://[www pan]+.[a-z]+.com/s/[\w-]+)`)
 	// 提取码规则2	百度、阿里云都适用
-	rePwd2 := regexp.MustCompile(`(http[s]?://[www pan]+.[a-z]+.com/s/[0-9a-zA-Z_-]+)\s(提取码:[\s]?[0-9a-zA-Z]{4})`)
+	rebaiduAliPwd2 := regexp.MustCompile(`(http[s]?://[www pan]+.[a-z]+.com/s/[\w-]+)\s(提取码:[\s]?\w{4})`)
 	// 115提取码规则1
-	rePwd3 := regexp.MustCompile(`(https://115.com/s/[0-9a-zA-Z]+)#\r\n.+?\n访问码：(.{4})`)
+	re115Pwd := regexp.MustCompile(`(https://115.com/s/\w+)#\r\n.+?\n访问码：(.{4})`)
 	// 115提取码规则2
-	rePwd4 := regexp.MustCompile(`(https://115.com/s/.+?)[? #]+password=(.{4})`)
-	res := re.FindAllSubmatch(*data, -1)
-	res115 := re115.FindAllSubmatch(*data, -1)
-	resPwd1 := rePwd1.FindAllSubmatch(*data, -1)
-	resPwd2 := rePwd2.FindAllSubmatch(*data, -1)
-	resPwd3 := rePwd3.FindAllSubmatch(*data, -1)
-	resPwd4 := rePwd4.FindAllSubmatch(*data, -1)
-    // 将匹配到的阿里、百度链接写入到url.urlList
-    for _, v := range res {
-		_url := strings.TrimSpace(string(v[1]))
-        if url.urlList[0] == "" {
-			url.urlList[0] = _url
-			continue
-		}
-		url.urlList = append(url.urlList, []string{_url}...)
+	re115Pwd2 := regexp.MustCompile(`(https://115.com/s/.+?)[? #]+password=(.{4})`)
+	// 夸克提取码规则
+	reQuarkPwd := regexp.MustCompile(`(https://pan.quark.cn/s/\w+)\?passcode=(.{4})`)
+	resbaiduAli := rebaiduAli.FindAllSubmatch(data, -1)
+	res115 := re115.FindAllSubmatch(data, -1)
+	resQuark := reQuark.FindAllSubmatch(data, -1)
+	resbaiduAliPwd := rebaiduAliPwd.FindAllSubmatch(data, -1)
+	resbaiduAliPwd2 := rebaiduAliPwd2.FindAllSubmatch(data, -1)
+	res115Pwd := re115Pwd.FindAllSubmatch(data, -1)
+	res115Pwd2 := re115Pwd2.FindAllSubmatch(data, -1)
+	resQuarkPwd := reQuarkPwd.FindAllSubmatch(data, -1)
+	// 将匹配到的阿里、百度链接写入url.urlList
+	for _, v := range resbaiduAli {
+		url := strings.TrimSpace(string(v[1]))
+		loli.urlList = append(loli.urlList, url)
 	}
 	// 115链接写入url.urlList
 	for _, v := range res115 {
-		_url := strings.TrimSpace(string(v[1]))
-        if url.urlList[0] == "" {
-			url.urlList[0] = _url
-			continue
-		}
-		url.urlList = append(url.urlList, []string{_url}...)
+		url := strings.TrimSpace(string(v[1]))
+		loli.urlList = append(loli.urlList, url)
 	}
-	// 将百度、阿里提取码和链接写到map里
-	for _, v := range resPwd1 {
-		_url := strings.TrimSpace(string(v[2]))
-		url.Pwd[_url] = string(v[1])
+	// 夸克链接写入url.urlList
+	for _, v := range resQuark {
+		url := strings.TrimSpace(string(v[0]))
+		loli.urlList = append(loli.urlList, url)
 	}
-	for _, v := range resPwd2 {
-		_url := strings.TrimSpace(string(v[1]))
-		url.Pwd[_url] = string(v[2])
+	// 将百度、阿里提取码和链接写入map
+	for _, v := range resbaiduAliPwd {
+		url := strings.TrimSpace(string(v[2]))
+		loli.Pwd[url] = string(v[1])
 	}
-	// 115提取码和链接写到map里
-	for _, v := range resPwd3 {
-		_url := strings.TrimSpace(string(v[1]))
-		url.Pwd[_url] = "?password=" + string(v[2])
+	for _, v := range resbaiduAliPwd2 {
+		url := strings.TrimSpace(string(v[1]))
+		loli.Pwd[url] = string(v[2])
 	}
-	for _, v := range resPwd4 {
-		_url := strings.TrimSpace(string(v[1]))
-		url.Pwd[_url] = "?password=" + string(v[2])
+	// 115提取码和链接写入map
+	for _, v := range res115Pwd {
+		url := strings.TrimSpace(string(v[1]))
+		loli.Pwd[url] = "?password=" + string(v[2])
+	}
+	for _, v := range res115Pwd2 {
+		url := strings.TrimSpace(string(v[1]))
+		loli.Pwd[url] = "?password=" + string(v[2])
+	}
+	// 夸克提取码和链接写入map
+	for _, v := range resQuarkPwd {
+		url := strings.TrimSpace(string(v[1]))
+		loli.Pwd[url] = "?passcode=" + string(v[2])
 	}
 }
 
 // 检测版本
 func init() {
-	const version = "v2.0.7"
+	const version = "v2.1.1"
 	url := "https://docs.qq.com/dop-api/opendoc?id=DT3NEWFlERWdsSU5l&normal=1"
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatal("检测版本错误！")
+	headers := map[string]string{
+		"Referer":    "https://docs.qq.com/dop-api/opendoc?u=b428edf70fd8491680c0d496077dc2f0&id=DT3NEWFlERWdsSU5l&normal=1",
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36",
 	}
-	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
+	_, data, err := get(url, headers)
+	if err != nil {
+		panic(err)
+	}
 	re := regexp.MustCompile("loli{(.+?),(.+?),(.+?)}loli")
-	res := re.FindAllSubmatch(body, -1)
+	res := re.FindAllSubmatch(data, -1)
 	ver := string(res[0][1])
 	updateContent := string(res[0][2])
 	link := strings.Split(string(res[0][3]), "\\n")
 	if ver != version {
-		fmt.Printf("当前版本：%s\n最新版本：%s\n更新内容：%s\n阿里云盘：%s\nGithub：%s\n", version, ver, updateContent, link[0], link[1])
+		fmt.Printf("当前版本：%s\n最新版本：%s\n更新内容：%s\n阿里云盘：%s\nGithub：%s\n\n", version, ver, updateContent, link[0], link[1])
+		enterKeyExit()
 	}
 }
 
 func main() {
-	var url Url
-	var num string
-	var loli string
-	var tmp string
-	var flag bool  // 检测模式
-	url.urlList = make([]string, 1)
-	fmt.Println("-------------百度、阿里、115云盘链接有效性检测-------------")
-	fmt.Print("0.单个检测\n1.批量检测（读取软件运行目录url.txt里的链接，检测完自动将有效链接导出至loli.txt）\n")
-	fmt.Println("------------------------------------------------")
-	fmt.Print("num:")
-	fmt.Scanln(&num)
-	switch num {
-		case "0":
-			fmt.Print("url:")
-			// 处理字符串里的空格,然后拼接
-			for {
-				n, _ := fmt.Scanf("%s", &tmp)
-				if n == 0 {
-					break
-				}
-				loli += tmp + " "
-			}
-            urlData := []byte(loli)
-            url.regexpUrl(&urlData)
-		case "1":
-			flag = true
-			url.getUrlList()
+	var loli Loli
+	// 判断当前终端是否支持显示颜色
+	if runtime.GOOS == "windows" {
+		pid := os.Getppid()
+		process, err := ps.FindProcess(pid)
+		if err != nil {
+			log.Println(err)
+		}
+		if pName := process.Executable(); pName == "cmd.exe" || pName == "explorer.exe" {
+			outputColor = false
+		}
 	}
-	url.checkUrl(flag)
+	fmt.Println("-------------百度、阿里、115、夸克网盘链接有效性检测-------------")
+	fmt.Print("检测完自动导出有效链接\n")
+	fmt.Println("------------------------------------------------")
+
+	if err := loli.getUrlList(); err != nil {
+		fmt.Println(err)
+		enterKeyExit()
+	}
+	loli.checkUrl()
 }
