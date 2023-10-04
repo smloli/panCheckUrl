@@ -237,7 +237,7 @@ func (loli *Loli) checkUrl() {
 		return
 	}
 	for _, v := range loli.okUrl {
-		_, err := f.WriteString(v + "\n")
+		_, err := f.WriteString(fmt.Sprintf("%s%s\n", v, loli.Pwd[v]))
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -250,7 +250,7 @@ func (loli *Loli) checkUrl() {
 		return
 	}
 	for _, v := range loli.errUrl {
-		_, err := f.WriteString(v + "\n")
+		_, err := f.WriteString(fmt.Sprintf("%s%s\n", v, loli.Pwd[v]))
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -334,11 +334,11 @@ func (loli *Loli) regexpUrl(data []byte) {
 	// 将百度、阿里提取码和链接写入map
 	for _, v := range resbaiduAliPwd {
 		url := strings.TrimSpace(string(v[2]))
-		loli.Pwd[url] = string(v[1])
+		loli.Pwd[url] = " " + string(v[1])
 	}
 	for _, v := range resbaiduAliPwd2 {
 		url := strings.TrimSpace(string(v[1]))
-		loli.Pwd[url] = string(v[2])
+		loli.Pwd[url] = " " + string(v[2])
 	}
 	// 115提取码和链接写入map
 	for _, v := range res115Pwd {
